@@ -27,8 +27,8 @@ canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
 canvas.freeDrawingBrush.color = colorPicker.value;
 canvas.freeDrawingBrush.width = parseInt(brushSize.value);
 
-// Unsplash API 設定（請替換為您的 Access Key）
-const UNSPLASH_ACCESS_KEY = 'YOUR_UNSPLASH_ACCESS_KEY';
+// 從配置檔案取得 API 金鑰
+const UNSPLASH_ACCESS_KEY = CONFIG.UNSPLASH_ACCESS_KEY;
 
 // 工具按鈕事件
 brushBtn.addEventListener('click', () => {
@@ -82,10 +82,16 @@ generateBtn.addEventListener('click', async () => {
     try {
         loading.style.display = 'flex';
         const category = categorySelect.value;
+        console.log('開始獲取圖片，類別:', category);
+        
         const imageUrl = await getRandomImage(category);
+        console.log('成功獲取圖片:', imageUrl);
+        
         await generateLineArt(imageUrl);
+        console.log('線稿生成完成');
         saveToHistory();
     } catch (error) {
+        console.error('錯誤詳細資訊:', error);
         alert('生成線稿時發生錯誤：' + error.message);
     } finally {
         loading.style.display = 'none';
@@ -94,15 +100,26 @@ generateBtn.addEventListener('click', async () => {
 
 // 從 Unsplash 獲取隨機圖片
 async function getRandomImage(category) {
-    const response = await fetch(
-        `https://api.unsplash.com/photos/random?query=${category}&orientation=landscape`,
-        {
-            headers: {
-                Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}`
-            }
+    if (!UNSPLASH_ACCESS_KEY || UNSPLASH_ACCESS_KEY === '在此輸入您的 Unsplash API 金鑰') {
+        throw new Error('請先在 config.js 中設定 Unsplash API 金鑰');
+    }
+    
+    console.log('正在發送 Unsplash API 請求...');
+    const url = `https://api.unsplash.com/photos/random?query=${category}&orientation=landscape`;
+    console.log('請求 URL:', url);
+    
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `Client-ID ${UNSPLASH_ACCESS_KEY}`
         }
-    );
-    if (!response.ok) throw new Error('無法獲取圖片');
+    });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Unsplash API 錯誤回應:', errorText);
+        throw new Error(`無法獲取圖片 (狀態碼: ${response.status})`);
+    }
+    
     const data = await response.json();
     return data.urls.regular;
 }
@@ -110,12 +127,22 @@ async function getRandomImage(category) {
 // 生成線稿
 async function generateLineArt(imageUrl) {
     return new Promise((resolve, reject) => {
+        console.log('開始載入圖片...');
         fabric.Image.fromURL(imageUrl, img => {
+            if (!img) {
+                console.error('圖片載入失敗');
+                reject(new Error('無法載入圖片'));
+                return;
+            }
+            console.log('圖片載入成功，開始處理...');
+
             // 調整圖片大小以適應畫布
             const scale = Math.min(
-                canvas.width / img.width,
-                canvas.height / img.height
+                (canvas.width * 0.8) / img.width,
+                (canvas.height * 0.8) / img.height
             );
+            console.log('計算縮放比例:', scale);
+
             img.scale(scale);
 
             // 清除畫布
@@ -127,7 +154,7 @@ async function generateLineArt(imageUrl) {
             tempCanvas.width = img.width * scale;
             tempCanvas.height = img.height * scale;
 
-            // 繪製圖片到臨時畫布
+            console.log('開始圖片處理...');
             img.clone(tempImg => {
                 tempImg.set({
                     left: 0,
@@ -135,22 +162,37 @@ async function generateLineArt(imageUrl) {
                     scaleX: scale,
                     scaleY: scale
                 });
+
+                // 轉換為灰度並增強對比度
+                tempCtx.filter = 'grayscale(100%) contrast(150%)';
                 tempCtx.drawImage(tempImg.getElement(), 0, 0, tempCanvas.width, tempCanvas.height);
+                tempCtx.filter = 'none';
 
                 // 應用邊緣檢測
+                console.log('開始邊緣檢測...');
                 const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
                 const edges = detectEdges(imageData);
-                
-                // 將邊緣數據繪製回畫布
                 tempCtx.putImageData(edges, 0, 0);
 
-                // 將處理後的圖像添加到主畫布
+                console.log('將處理後的圖像添加到畫布...');
                 fabric.Image.fromURL(tempCanvas.toDataURL(), processedImg => {
+                    // 置中圖片
+                    processedImg.set({
+                        left: (canvas.width - tempCanvas.width) / 2,
+                        top: (canvas.height - tempCanvas.height) / 2
+                    });
+                    
                     canvas.add(processedImg);
                     canvas.renderAll();
+                    console.log('線稿生成完成');
                     resolve();
                 });
             });
+        }, (err) => {
+            console.error('圖片載入錯誤:', err);
+            reject(new Error('圖片載入失敗：' + err.message));
+        }, {
+            crossOrigin: 'anonymous'  // 添加跨域支援
         });
     });
 }
@@ -162,6 +204,10 @@ function detectEdges(imageData) {
     const data = imageData.data;
     const output = new ImageData(width, height);
     const outputData = output.data;
+
+    // 調整參數
+    const threshold = 30; // 降低閾值使線條更清晰
+    const multiplier = 1.5; // 增強線條強度
 
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
@@ -185,12 +231,11 @@ function detectEdges(imageData) {
                 2 * data[idx + width * 4] +
                 data[idx + width * 4 + 4];
 
-            // 計算梯度大小
-            const magnitude = Math.sqrt(gx * gx + gy * gy);
+            // 計算梯度大小並增強
+            const magnitude = Math.min(255, Math.sqrt(gx * gx + gy * gy) * multiplier);
 
-            // 設置閾值
-            const threshold = 50;
-            const value = magnitude > threshold ? 255 : 0;
+            // 應用閾值
+            const value = magnitude > threshold ? 255 - magnitude : 255;
 
             // 設置像素值
             outputData[idx] = value;     // R

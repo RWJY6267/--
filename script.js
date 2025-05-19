@@ -128,76 +128,182 @@ async function getRandomImage(category) {
 async function generateLineArt(imageUrl) {
     return new Promise((resolve, reject) => {
         console.log('開始載入圖片...');
-        fabric.Image.fromURL(imageUrl, img => {
-            if (!img) {
-                console.error('圖片載入失敗');
-                reject(new Error('無法載入圖片'));
-                return;
-            }
-            console.log('圖片載入成功，開始處理...');
+        console.log('圖片 URL:', imageUrl);
 
-            // 調整圖片大小以適應畫布
-            const scale = Math.min(
-                (canvas.width * 0.8) / img.width,
-                (canvas.height * 0.8) / img.height
-            );
-            console.log('計算縮放比例:', scale);
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        
+        img.onload = function() {
+            try {
+                console.log('圖片載入成功');
+                console.log('原始圖片尺寸:', img.width, 'x', img.height);
 
-            img.scale(scale);
+                // 調整圖片大小以適應畫布
+                const scale = Math.min(
+                    (canvas.width * 0.8) / img.width,
+                    (canvas.height * 0.8) / img.height
+                );
+                console.log('計算的縮放比例:', scale);
 
-            // 清除畫布
-            canvas.clear();
+                // 創建臨時畫布進行圖像處理
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = Math.floor(img.width * scale);
+                tempCanvas.height = Math.floor(img.height * scale);
+                console.log('臨時畫布尺寸:', tempCanvas.width, 'x', tempCanvas.height);
 
-            // 創建臨時畫布進行圖像處理
-            const tempCanvas = document.createElement('canvas');
-            const tempCtx = tempCanvas.getContext('2d');
-            tempCanvas.width = img.width * scale;
-            tempCanvas.height = img.height * scale;
+                // 清除主畫布
+                canvas.clear();
 
-            console.log('開始圖片處理...');
-            img.clone(tempImg => {
-                tempImg.set({
-                    left: 0,
-                    top: 0,
-                    scaleX: scale,
-                    scaleY: scale
-                });
+                // 使用高品質的圖片縮放
+                tempCtx.imageSmoothingEnabled = true;
+                tempCtx.imageSmoothingQuality = 'high';
 
-                // 轉換為灰度並增強對比度
-                tempCtx.filter = 'grayscale(100%) contrast(150%)';
-                tempCtx.drawImage(tempImg.getElement(), 0, 0, tempCanvas.width, tempCanvas.height);
-                tempCtx.filter = 'none';
+                // 繪製並處理圖片
+                tempCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
+                console.log('已繪製原始圖片到臨時畫布');
 
-                // 應用邊緣檢測
-                console.log('開始邊緣檢測...');
-                const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-                const edges = detectEdges(imageData);
-                tempCtx.putImageData(edges, 0, 0);
-
-                console.log('將處理後的圖像添加到畫布...');
-                fabric.Image.fromURL(tempCanvas.toDataURL(), processedImg => {
-                    // 置中圖片
-                    processedImg.set({
-                        left: (canvas.width - tempCanvas.width) / 2,
-                        top: (canvas.height - tempCanvas.height) / 2
-                    });
+                try {
+                    // 轉換為灰度
+                    const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                    console.log('已獲取圖片數據');
                     
-                    canvas.add(processedImg);
-                    canvas.renderAll();
-                    console.log('線稿生成完成');
-                    resolve();
-                });
-            });
-        }, (err) => {
+                    // 轉換為灰度
+                    const grayscaleData = convertToGrayscale(imageData);
+                    tempCtx.putImageData(grayscaleData, 0, 0);
+                    console.log('已完成灰度轉換');
+
+                    // 增強對比度
+                    const contrastData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                    const enhancedData = adjustContrast(contrastData, 50);
+                    tempCtx.putImageData(enhancedData, 0, 0);
+                    console.log('已完成對比度增強');
+
+                    // 平滑處理
+                    const smoothData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                    const smoothedData = smoothImage(smoothData);
+                    tempCtx.putImageData(smoothedData, 0, 0);
+                    console.log('已完成平滑處理');
+
+                    // 應用邊緣檢測
+                    console.log('開始邊緣檢測...');
+                    const edgeData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+                    const edges = detectEdges(edgeData);
+                    tempCtx.putImageData(edges, 0, 0);
+                    console.log('已完成邊緣檢測');
+
+                    // 將處理後的圖像添加到主畫布
+                    fabric.Image.fromURL(tempCanvas.toDataURL(), function(processedImg) {
+                        if (!processedImg) {
+                            console.error('無法創建 fabric.Image 物件');
+                            reject(new Error('圖片處理失敗'));
+                            return;
+                        }
+
+                        processedImg.set({
+                            left: (canvas.width - tempCanvas.width) / 2,
+                            top: (canvas.height - tempCanvas.height) / 2
+                        });
+                        
+                        canvas.add(processedImg);
+                        canvas.renderAll();
+                        console.log('線稿生成完成');
+                        resolve();
+                    });
+                } catch (err) {
+                    console.error('圖片處理過程中發生錯誤:', err);
+                    reject(err);
+                }
+            } catch (err) {
+                console.error('onload 處理過程中發生錯誤:', err);
+                reject(err);
+            }
+        };
+
+        img.onerror = function(err) {
             console.error('圖片載入錯誤:', err);
-            reject(new Error('圖片載入失敗：' + err.message));
-        }, {
-            crossOrigin: 'anonymous'  // 添加跨域支援
-        });
+            reject(new Error('圖片載入失敗，請確認圖片網址是否正確且可存取'));
+        };
+
+        img.src = imageUrl;
     });
 }
 
-// Sobel 邊緣檢測
+// 平滑圖像
+function smoothImage(imageData) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    const output = new ImageData(width, height);
+    const outputData = output.data;
+
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const idx = (y * width + x) * 4;
+            
+            // 計算 3x3 區域的平均值
+            let sumR = 0, sumG = 0, sumB = 0;
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    const currentIdx = ((y + dy) * width + (x + dx)) * 4;
+                    sumR += data[currentIdx];
+                    sumG += data[currentIdx + 1];
+                    sumB += data[currentIdx + 2];
+                }
+            }
+            
+            // 設置平均值
+            outputData[idx] = sumR / 9;
+            outputData[idx + 1] = sumG / 9;
+            outputData[idx + 2] = sumB / 9;
+            outputData[idx + 3] = 255;
+        }
+    }
+
+    return output;
+}
+
+// 轉換為灰度（優化版本）
+function convertToGrayscale(imageData) {
+    const data = imageData.data;
+    const output = new ImageData(imageData.width, imageData.height);
+    const outputData = output.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+        // 使用更準確的灰度轉換公式 (R * 0.299 + G * 0.587 + B * 0.114)
+        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        outputData[i] = gray;
+        outputData[i + 1] = gray;
+        outputData[i + 2] = gray;
+        outputData[i + 3] = 255;
+    }
+
+    return output;
+}
+
+// 調整對比度（優化版本）
+function adjustContrast(imageData, contrast) {
+    const data = imageData.data;
+    const output = new ImageData(imageData.width, imageData.height);
+    const outputData = output.data;
+    const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+
+    for (let i = 0; i < data.length; i += 4) {
+        outputData[i] = clamp(factor * (data[i] - 128) + 128);
+        outputData[i + 1] = clamp(factor * (data[i + 1] - 128) + 128);
+        outputData[i + 2] = clamp(factor * (data[i + 2] - 128) + 128);
+        outputData[i + 3] = 255;
+    }
+
+    return output;
+}
+
+// 限制值在 0-255 範圍內
+function clamp(value) {
+    return Math.min(255, Math.max(0, value));
+}
+
+// Sobel 邊緣檢測（優化版本）
 function detectEdges(imageData) {
     const width = imageData.width;
     const height = imageData.height;
@@ -206,42 +312,48 @@ function detectEdges(imageData) {
     const outputData = output.data;
 
     // 調整參數
-    const threshold = 30; // 降低閾值使線條更清晰
-    const multiplier = 1.5; // 增強線條強度
+    const threshold = 15;    // 進一步降低閾值
+    const multiplier = 2.5;  // 增加線條強度
+
+    // Sobel 運算子矩陣
+    const sobelX = [
+        [-1, 0, 1],
+        [-2, 0, 2],
+        [-1, 0, 1]
+    ];
+    const sobelY = [
+        [-1, -2, -1],
+        [0, 0, 0],
+        [1, 2, 1]
+    ];
 
     for (let y = 1; y < height - 1; y++) {
         for (let x = 1; x < width - 1; x++) {
+            let gx = 0;
+            let gy = 0;
+
+            // 應用 Sobel 運算子
+            for (let i = -1; i <= 1; i++) {
+                for (let j = -1; j <= 1; j++) {
+                    const idx = ((y + i) * width + (x + j)) * 4;
+                    const val = data[idx];
+                    gx += val * sobelX[i + 1][j + 1];
+                    gy += val * sobelY[i + 1][j + 1];
+                }
+            }
+
+            // 計算梯度大小
             const idx = (y * width + x) * 4;
-
-            // 計算 x 方向的梯度
-            const gx = 
-                data[idx - 4 - width * 4] +
-                2 * data[idx - 4] +
-                data[idx - 4 + width * 4] -
-                data[idx + 4 - width * 4] -
-                2 * data[idx + 4] -
-                data[idx + 4 + width * 4];
-
-            // 計算 y 方向的梯度
-            const gy = 
-                data[idx - width * 4 - 4] +
-                2 * data[idx - width * 4] +
-                data[idx - width * 4 + 4] -
-                data[idx + width * 4 - 4] -
-                2 * data[idx + width * 4] +
-                data[idx + width * 4 + 4];
-
-            // 計算梯度大小並增強
-            const magnitude = Math.min(255, Math.sqrt(gx * gx + gy * gy) * multiplier);
-
-            // 應用閾值
-            const value = magnitude > threshold ? 255 - magnitude : 255;
+            let magnitude = Math.sqrt(gx * gx + gy * gy) * multiplier;
+            
+            // 應用閾值和反轉顏色
+            const value = magnitude > threshold ? 0 : 255;
 
             // 設置像素值
-            outputData[idx] = value;     // R
-            outputData[idx + 1] = value; // G
-            outputData[idx + 2] = value; // B
-            outputData[idx + 3] = 255;   // A
+            outputData[idx] = value;
+            outputData[idx + 1] = value;
+            outputData[idx + 2] = value;
+            outputData[idx + 3] = 255;
         }
     }
 
